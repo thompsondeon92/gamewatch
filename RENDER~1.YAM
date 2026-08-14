@@ -1,0 +1,37 @@
+# Free web service. bot.py binds 0.0.0.0:$PORT in webhook mode, which is what
+# satisfies Render's port scan - a long-polling bot never opens a port and its
+# deploy fails with "no open ports detected".
+#
+# Free instances spin down after 15 minutes idle. That's fine here: Telegram
+# retries webhook deliveries, and the GitHub Actions scheduler pings /healthz
+# to wake the service before triggering a job.
+services:
+  - type: web
+    name: gamewatch-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    healthCheckPath: /healthz
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false
+      # IGDB, via Twitch app credentials
+      - key: TWITCH_CLIENT_ID
+        sync: false
+      - key: TWITCH_CLIENT_SECRET
+        sync: false
+      # RAWG fallback (optional but recommended)
+      - key: RAWG_API_KEY
+        sync: false
+      # Supabase or Neon connection string. NOT Render's free Postgres, which
+      # expires 30 days after creation.
+      - key: DATABASE_URL
+        sync: false
+      # Shared secret for /tasks/run. Generate with: openssl rand -hex 32
+      - key: CRON_TOKEN
+        sync: false
+      - key: USE_WEBHOOK
+        value: "true"
+      - key: PYTHONUNBUFFERED
+        value: "1"

@@ -1,0 +1,47 @@
+# Copy to .env and fill in. Never commit .env.
+
+# --- Telegram -------------------------------------------------------------
+# From @BotFather (https://t.me/BotFather)
+TELEGRAM_TOKEN=123456789:AAExampleTokenReplaceMe
+
+# --- IGDB (primary source) ------------------------------------------------
+# IGDB authenticates with Twitch app credentials. Register an application at
+# https://dev.twitch.tv/console/apps  -> Client ID + Client Secret.
+# Free for non-commercial use; 4 requests/second.
+TWITCH_CLIENT_ID=
+TWITCH_CLIENT_SECRET=
+
+# --- RAWG (fallback source, optional) -------------------------------------
+# Free key from https://rawg.io/apidocs (20,000 requests/month).
+# Free tier requires visible attribution with a backlink to RAWG - /help
+# and the README already carry it. Keep it if you fork this.
+RAWG_API_KEY=
+
+# --- Database -------------------------------------------------------------
+# Supabase (https://supabase.com) or Neon (https://neon.tech) connection
+# string. Do NOT use Render's free Postgres: it expires 30 days after creation.
+# Supabase: use the "Connection pooling" / transaction-mode URI.
+DATABASE_URL=postgresql://user:password@host:5432/dbname
+
+# --- Deployment only (leave unset locally) --------------------------------
+# Webhook mode is required for a Render web service: long polling never binds
+# a port and the deploy fails the port scan.
+# USE_WEBHOOK=false
+#
+# Render injects RENDER_EXTERNAL_URL and PORT automatically.
+# WEBHOOK_BASE_URL=https://your-service.onrender.com
+# PORT=10000
+#
+# Shared secret for the /tasks/run endpoint. Generate with:
+#   openssl rand -hex 32
+# Must match the GAMEWATCH_CRON_TOKEN secret in GitHub Actions.
+CRON_TOKEN=
+
+# --- Behaviour (optional, defaults shown) ---------------------------------
+# MAX_TRACKED_PER_CHAT=50
+# MAX_RULES_PER_CHAT=10
+# DIGEST_WINDOW_DAYS=30
+# DIGEST_WEEKDAY=0            # 0 = Monday
+# DISCOVERY_PER_RULE=15
+# DISCOVERY_MAX_MESSAGES=5
+# SEND_DELAY_SECONDS=0.06

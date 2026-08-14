@@ -327,7 +327,8 @@ async def _post_init(app):
     await db.init(config.DATABASE_URL)
     app.bot_data.setdefault("catalog", _catalog())
     logger.info(
-        "sources: %s", ", ".join(app.bot_data["catalog"].sources) or "NONE CONFIGURED"
+        "startup complete — database ready, sources: %s",
+        ", ".join(app.bot_data["catalog"].sources) or "NONE CONFIGURED",
     )
 
 
@@ -464,9 +465,14 @@ async def serve_webhook(app):
         )
     )
 
-    # `async with app` initializes the bot (and runs post_init), which must
-    # happen before any API call such as set_webhook.
+    # `async with app` initializes the bot, but PTB only invokes post_init /
+    # post_shutdown from run_polling() and run_webhook(). We drive the
+    # lifecycle ourselves here, so they must be called explicitly - otherwise
+    # the database pool is never created and every handler raises
+    # "db.init() has not been called". Both are idempotent, so the builder
+    # hooks used by polling mode can stay registered.
     async with app:
+        await _post_init(app)
         await app.bot.set_webhook(
             url=f"{config.WEBHOOK_BASE_URL}/{url_path}",
             secret_token=secret,
@@ -479,6 +485,7 @@ async def serve_webhook(app):
             await server.serve()
         finally:
             await app.stop()
+            await _post_shutdown(app)
 
 
 # --------------------------------------------------------------------------

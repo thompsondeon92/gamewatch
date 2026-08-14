@@ -38,6 +38,14 @@ _WINDOW_PATTERN = re.compile(r"\b(Q[1-4]|TBD|TBA)\b", re.IGNORECASE)
 
 LOOKUP_LIMIT = 500
 
+# Field lists differ per endpoint: IGDB rejects the ENTIRE query with a 400 if
+# you ask for a field the endpoint doesn't have. /genres has no abbreviation
+# or alternative_name; /platforms does.
+LOOKUP_FIELDS = {
+    "genres": "id,name,slug",
+    "platforms": "id,name,slug,abbreviation,alternative_name",
+}
+
 # What people type -> what IGDB actually calls it. Only mappings that are
 # unambiguously correct; anything else is left to substring/fuzzy matching.
 GENRE_ALIASES = {
@@ -301,13 +309,11 @@ class IGDBClient:
         """
         if endpoint in self._lookup_cache:
             return self._lookup_cache[endpoint]
+        fields = LOOKUP_FIELDS.get(endpoint, "id,name,slug")
         rows = []
         offset = 0
         while True:
-            body = (
-                "fields id,name,slug,abbreviation,alternative_name; "
-                f"limit {LOOKUP_LIMIT}; offset {offset};"
-            )
+            body = f"fields {fields}; limit {LOOKUP_LIMIT}; offset {offset};"
             try:
                 page = await self._query(endpoint, body)
             except httpx.HTTPError as exc:

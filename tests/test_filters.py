@@ -139,6 +139,22 @@ def test_lookup_table_is_cached():
     print("PASS: genre table fetched once and reused; no search operator used")
 
 
+def test_genre_query_omits_fields_genres_does_not_have():
+    """IGDB 400s the whole query if you request a field the endpoint lacks."""
+    client = StubClient()
+    asyncio.run(client.resolve_filter("genre", "rpg"))
+    body = next(b for e, b in client.queries if e == "genres")
+    assert "abbreviation" not in body, body
+    assert "alternative_name" not in body, body
+    assert "fields id,name,slug;" in body, body
+
+    client2 = StubClient()
+    asyncio.run(client2.resolve_filter("platform", "ps5"))
+    pbody = next(b for e, b in client2.queries if e == "platforms")
+    assert "abbreviation" in pbody, "platforms DO have abbreviation, and we need it"
+    print("PASS: per-endpoint field lists (genres has no abbreviation/alternative_name)")
+
+
 def test_company_still_uses_server_search():
     result, client = resolve("company", "fromsoftware")
     assert result == ("5001", "FromSoftware")

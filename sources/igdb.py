@@ -36,6 +36,94 @@ GAME_FIELDS = (
 EXACT_CATEGORY = 0
 _WINDOW_PATTERN = re.compile(r"\b(Q[1-4]|TBD|TBA)\b", re.IGNORECASE)
 
+LOOKUP_LIMIT = 500
+
+# What people type -> what IGDB actually calls it. Only mappings that are
+# unambiguously correct; anything else is left to substring/fuzzy matching.
+GENRE_ALIASES = {
+    "rpg": "role-playing",
+    "jrpg": "role-playing",
+    "arpg": "role-playing",
+    "crpg": "role-playing",
+    "roleplaying": "role-playing",
+    "role playing": "role-playing",
+    "fps": "shooter",
+    "tps": "shooter",
+    "first person shooter": "shooter",
+    "rts": "real time strategy",
+    "tbs": "turn-based strategy",
+    "turn based strategy": "turn-based strategy",
+    "platformer": "platform",
+    "sim": "simulator",
+    "sims": "simulator",
+    "simulation": "simulator",
+    "sports": "sport",
+    "beat em up": "hack and slash",
+    "brawler": "hack and slash",
+    "vn": "visual novel",
+    "board game": "card & board game",
+    "card game": "card & board game",
+    "point and click": "point-and-click",
+}
+
+PLATFORM_ALIASES = {
+    "pc": "pc (microsoft windows)",
+    "windows": "pc (microsoft windows)",
+    "ps5": "playstation 5",
+    "ps4": "playstation 4",
+    "ps3": "playstation 3",
+    "ps2": "playstation 2",
+    "psx": "playstation",
+    "ps1": "playstation",
+    "xsx": "xbox series",
+    "series x": "xbox series",
+    "series s": "xbox series",
+    "xbox series x": "xbox series",
+    "xbone": "xbox one",
+    "switch": "nintendo switch",
+    "switch 2": "nintendo switch 2",
+    "nsw": "nintendo switch",
+    "mac": "mac",
+    "macos": "mac",
+}
+
+_CANDIDATE_FIELDS = ("name", "slug", "abbreviation", "alternative_name")
+
+
+def _row_labels(row):
+    labels = []
+    for field in _CANDIDATE_FIELDS:
+        value = row.get(field)
+        if value:
+            labels.append(str(value).lower().replace("-", " ").strip())
+    return labels
+
+
+def _match_row(rows, query):
+    """Best row for a user's text, tried strictest first."""
+    query = query.lower().replace("-", " ").strip()
+    if not query:
+        return None
+
+    scored = [(row, _row_labels(row)) for row in rows]
+
+    for row, labels in scored:  # exact
+        if query in labels:
+            return row
+    for row, labels in scored:  # prefix
+        if any(label.startswith(query) for label in labels):
+            return row
+    for row, labels in scored:  # substring
+        if any(query in label for label in labels):
+            return row
+
+    # Last resort: closest spelling, to forgive typos like "playstaton".
+    import difflib
+
+    flat = {label: row for row, labels in scored for label in labels}
+    close = difflib.get_close_matches(query, list(flat), n=1, cutoff=0.75)
+    return flat[close[0]] if close else None
+
 
 class RateLimiter:
     """Spaces calls at most `rate` per second (IGDB allows 4/s)."""
@@ -114,6 +202,8 @@ class IGDBClient:
         self._token = None
         self._token_expires = 0.0
         self._token_lock = asyncio.Lock()
+        # Genres and platforms barely change; fetch each list once per process.
+        self._lookup_cache = {}
 
     @property
     def enabled(self):
@@ -200,25 +290,75 @@ class IGDBClient:
             games.extend(to_game(row) for row in rows)
         return games
 
+    async def _lookup_table(self, endpoint):
+        """All rows of a small reference endpoint, fetched once and cached.
+
+        IGDB's `search` operator is not supported on /genres, and genre names
+        are things like "Role-playing (RPG)" that a naive search would miss
+        anyway. There are only ~23 genres and ~230 platforms, so pulling the
+        whole list once and matching locally is both cheaper and far more
+        forgiving.
+        """
+        if endpoint in self._lookup_cache:
+            return self._lookup_cache[endpoint]
+        rows = []
+        offset = 0
+        while True:
+            body = (
+                "fields id,name,slug,abbreviation,alternative_name; "
+                f"limit {LOOKUP_LIMIT}; offset {offset};"
+            )
+            try:
+                page = await self._query(endpoint, body)
+            except httpx.HTTPError as exc:
+                logger.warning("IGDB %s lookup table failed: %s", endpoint, exc)
+                break
+            rows.extend(page)
+            if len(page) < LOOKUP_LIMIT:
+                break
+            offset += LOOKUP_LIMIT
+            if offset >= 2000:  # safety valve
+                break
+        if rows:
+            self._lookup_cache[endpoint] = rows
+            logger.info("IGDB %s table cached (%d rows)", endpoint, len(rows))
+        return rows
+
     async def resolve_filter(self, kind, text):
         """Turn 'rpg' / 'ps5' / 'fromsoftware' into an IGDB id + label."""
-        endpoint = {
-            "genre": "genres",
-            "platform": "platforms",
-            "company": "companies",
-        }.get(kind)
-        if endpoint is None:
+        query = (text or "").strip().lower()
+        if not query:
             return None
-        safe = text.replace('"', " ").strip()
-        body = f'search "{safe}"; fields id,name; limit 5;'
-        try:
-            rows = await self._query(endpoint, body)
-        except httpx.HTTPError as exc:
-            logger.warning("IGDB %s lookup failed for %r: %s", kind, text, exc)
-            return None
-        if not rows:
-            return None
-        return str(rows[0]["id"]), rows[0].get("name") or safe
+
+        if kind in ("genre", "platform"):
+            endpoint = "genres" if kind == "genre" else "platforms"
+            aliases = GENRE_ALIASES if kind == "genre" else PLATFORM_ALIASES
+            rows = await self._lookup_table(endpoint)
+            if not rows:
+                return None
+            match = _match_row(rows, aliases.get(query, query))
+            if match is None and query in aliases:
+                match = _match_row(rows, query)  # try the raw text too
+            if match is None:
+                return None
+            return str(match["id"]), match.get("name") or text
+
+        if kind == "company":
+            # Hundreds of thousands of companies, so a server-side search is
+            # the only sane option here - and /companies does support it.
+            safe = text.replace('"', " ").strip()
+            try:
+                rows = await self._query(
+                    "companies", f'search "{safe}"; fields id,name; limit 5;'
+                )
+            except httpx.HTTPError as exc:
+                logger.warning("IGDB company lookup failed for %r: %s", text, exc)
+                return None
+            if not rows:
+                return None
+            return str(rows[0]["id"]), rows[0].get("name") or safe
+
+        return None
 
     async def discover(self, kind, value_id, limit=15):
         """Upcoming games matching a discovery rule, newest listings first."""
